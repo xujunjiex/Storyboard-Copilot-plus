@@ -5,13 +5,11 @@ import {
   ZoomOut,
   Maximize2,
   Grid3X3,
-  ScrollText,
 } from 'lucide-react';
 import { useReactFlow } from '@xyflow/react';
 
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useSettingsStore } from '@/stores/settingsStore';
-import { openSettingsDialog } from '@/features/settings/settingsEvents';
 import { useLogStore } from '@/lib/logger';
 
 interface CanvasToolbarProps {
@@ -77,14 +75,6 @@ export const CanvasToolbar = memo(({ isLocked = false }: CanvasToolbarProps) => 
           title={t('canvas.toolbar.snapToGrid')}
         >
           <Grid3X3 className="h-4 w-4" />
-        </button>
-
-        <button
-          onClick={() => openSettingsDialog({ category: 'logging' })}
-          className="rounded p-1.5 transition-colors hover:bg-bg-dark text-text-muted"
-          title={t('canvas.toolbar.loggerSettings')}
-        >
-          <ScrollText className="h-4 w-4" />
         </button>
 
         <button
