@@ -66,7 +66,9 @@
       "zoomOut": "缩小",
       "fitView": "适应视图",
       "lock": "锁定画布",
-      "unlock": "解锁画布"
+      "unlock": "解锁画布",
+      "loggerSettings": "日志设置",
+      "loggerToggle": "日志面板"
     }
   },
   "tool": {
