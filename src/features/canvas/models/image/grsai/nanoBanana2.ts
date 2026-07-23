@@ -14,6 +14,10 @@ const NANO_BANANA_ASPECT_RATIOS = [
   '5:4',
   '4:5',
   '21:9',
+  '1:4',
+  '4:1',
+  '1:8',
+  '8:1',
 ] as const;
 
 export const imageModel: ImageModelDefinition = {
