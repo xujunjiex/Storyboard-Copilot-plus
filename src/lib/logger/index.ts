@@ -6,6 +6,32 @@ import { isLevelEnabled, resolveLevel } from './levels';
 import { resolveNamespace } from './namespace';
 import { serializeFields } from './serialize';
 import { globalTransport } from './transport';
+import { useLogStore } from './store';
+
+// Wire up backend error events to LogPanel
+let backendListenerRegistered = false;
+async function ensureBackendErrorListener(): Promise<void> {
+  if (backendListenerRegistered) return;
+  backendListenerRegistered = true;
+  try {
+    const { listen } = await import('@tauri-apps/api/event');
+    await listen<{ message: string; model: string; provider: string; ts: number }>('backend:ai-error', (event) => {
+      const payload = event.payload;
+      useLogStore.getState().appendEntry({
+        id: uuidv4(),
+        ts: payload.ts ?? Date.now(),
+        level: 'error',
+        target: `backend:${payload.provider}`,
+        message: payload.message,
+        fields: { model: payload.model },
+      });
+    });
+  } catch {
+    // Not in Tauri environment, ignore
+  }
+}
+// Start listening when module loads
+ensureBackendErrorListener();
 
 function collectFields(args: unknown[]): LogFields {
   if (args.length === 0) return {};

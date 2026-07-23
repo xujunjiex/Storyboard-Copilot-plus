@@ -6,9 +6,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::RwLock;
-use tracing::info;
+use tracing::{info, error};
 use uuid::Uuid;
 
 use crate::ai::error::AIError;
@@ -333,6 +333,7 @@ pub async fn submit_generate_image_job(
         .cloned()
         .ok_or_else(|| "Provider not found".to_string())?;
 
+    let req_model = request.model.clone();
     let req = GenerateRequest {
         prompt: request.prompt,
         model: request.model,
@@ -350,7 +351,22 @@ pub async fn submit_generate_image_job(
     let provider_id = provider.name().to_string();
 
     if provider.supports_task_resume() {
-        match provider.submit_task(req).await.map_err(|e| e.to_string())? {
+        let submit_result = provider.submit_task(req).await;
+        let submission = match submit_result {
+            Ok(submission) => submission,
+            Err(e) => {
+                let msg = e.to_string();
+                error!("[AI Backend Error] provider={} model={} error={}", provider.name(), req_model, msg);
+                let _ = app.emit("backend:ai-error", serde_json::json!({
+                    "message": msg,
+                    "model": req_model,
+                    "provider": provider.name(),
+                    "ts": SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as i64,
+                }));
+                return Err(msg);
+            }
+        };
+        match submission {
             ProviderTaskSubmission::Succeeded(image_source) => {
                 insert_generation_job(
                     &app,
