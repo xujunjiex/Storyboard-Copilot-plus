@@ -671,20 +671,8 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
     }),
     [grsaiNanoBananaProModel, nodeData.extraParams, selectedModel.id]
   );
-  const resolutionOptions = useMemo(
-    () => resolveImageModelResolutions(selectedModel, { extraParams: effectiveExtraParams }),
-    [effectiveExtraParams, selectedModel]
-  );
-
-  const selectedResolution = useMemo((): AspectRatioChoice => {
-    return resolveImageModelResolution(selectedModel, nodeData.size, {
-      extraParams: effectiveExtraParams,
-    });
-  }, [effectiveExtraParams, nodeData.size, selectedModel]);
-
   // G31 Flash 不支持 auto aspectRatio，需要隐藏该选项
   const supportsAutoAspectRatio = useMemo(() => {
-    // RunningHub 模型中，V1 支持 auto，G31 Flash 不支持
     const modelId = selectedModel.id;
     if (modelId.includes('g31-flash')) {
       return false;
@@ -708,16 +696,29 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
     if (found) {
       return found;
     }
-    // 如果不支持 auto 且当前选中的是 auto，切换到第一个可用选项
     if (!supportsAutoAspectRatio && nodeAspectRatio === AUTO_REQUEST_ASPECT_RATIO) {
       return aspectRatioOptions[0] ?? { value: DEFAULT_ASPECT_RATIO, label: DEFAULT_ASPECT_RATIO };
     }
-    // 默认返回 auto 或第一个选项
     if (supportsAutoAspectRatio) {
       return AUTO_ASPECT_RATIO_OPTION;
     }
     return aspectRatioOptions[0] ?? { value: DEFAULT_ASPECT_RATIO, label: DEFAULT_ASPECT_RATIO };
   }, [aspectRatioOptions, nodeData.requestAspectRatio, supportsAutoAspectRatio]);
+
+  const resolutionOptions = useMemo(
+    () => resolveImageModelResolutions(selectedModel, {
+      extraParams: effectiveExtraParams,
+      aspectRatio: selectedAspectRatio.value,
+    }),
+    [effectiveExtraParams, selectedAspectRatio.value, selectedModel]
+  );
+
+  const selectedResolution = useMemo((): AspectRatioChoice => {
+    return resolveImageModelResolution(selectedModel, nodeData.size, {
+      extraParams: effectiveExtraParams,
+      aspectRatio: selectedAspectRatio.value,
+    });
+  }, [effectiveExtraParams, selectedAspectRatio.value, nodeData.size, selectedModel]);
 
   const ratioControlMode: StoryboardRatioControlMode = showStoryboardGenAdvancedRatioControls
     ? (nodeData.ratioControlMode === 'overall' ? 'overall' : 'cell')

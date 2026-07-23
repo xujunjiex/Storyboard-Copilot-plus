@@ -20,6 +20,8 @@ export interface ResolutionOption {
 
 export interface ImageModelRuntimeContext {
   extraParams?: Record<string, unknown>;
+  /** Currently selected aspect ratio — used by resolveResolutions to filter available resolutions */
+  aspectRatio?: string;
 }
 
 export type ExtraParamType = 'boolean' | 'enum' | 'number' | 'string';

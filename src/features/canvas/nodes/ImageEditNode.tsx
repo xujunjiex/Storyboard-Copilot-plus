@@ -309,16 +309,6 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     }),
     [data.extraParams, grsaiNanoBananaProModel, selectedModel.id]
   );
-  const resolutionOptions = useMemo(
-    () => resolveImageModelResolutions(selectedModel, { extraParams: effectiveExtraParams }),
-    [effectiveExtraParams, selectedModel]
-  );
-
-  const selectedResolution = useMemo(
-    () => resolveImageModelResolution(selectedModel, data.size, { extraParams: effectiveExtraParams }),
-    [data.size, effectiveExtraParams, selectedModel]
-  );
-
   const aspectRatioOptions = useMemo<AspectRatioChoice[]>(
     () => [{
       value: AUTO_REQUEST_ASPECT_RATIO,
@@ -332,6 +322,22 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
       aspectRatioOptions.find((item) => item.value === data.requestAspectRatio) ??
       aspectRatioOptions[0],
     [aspectRatioOptions, data.requestAspectRatio]
+  );
+
+  const resolutionOptions = useMemo(
+    () => resolveImageModelResolutions(selectedModel, {
+      extraParams: effectiveExtraParams,
+      aspectRatio: selectedAspectRatio.value,
+    }),
+    [effectiveExtraParams, selectedAspectRatio.value, selectedModel]
+  );
+
+  const selectedResolution = useMemo(
+    () => resolveImageModelResolution(selectedModel, data.size, {
+      extraParams: effectiveExtraParams,
+      aspectRatio: selectedAspectRatio.value,
+    }),
+    [data.size, effectiveExtraParams, selectedAspectRatio.value, selectedModel]
   );
 
   const requestResolution = selectedModel.resolveRequest({
