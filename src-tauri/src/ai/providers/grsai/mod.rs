@@ -272,18 +272,11 @@ impl GrsaiProvider {
 
         let body_json = serde_json::to_string_pretty(&body).unwrap_or_default();
         info!("[GRSAI API] URL: {} model: {}", endpoint, model);
-        // Write full request body to debug file in project root
-        let _ = std::fs::write("grsai_debug.log", format!(
-            "=== GRSAI Request Debug ===\nURL: {}\nModel: {}\naspectRatio: {}\nimageSize: {:?}\nimages count: {}\nis_gpt: {}\nis_gpt_vip: {}\n\n--- Request Body ---\n{}\n",
-            endpoint,
-            model,
-            body.aspect_ratio,
-            body.image_size,
+        info!("[GRSAI Request] aspectRatio={} imageSize={:?} imagesCount={} isGpt={} isGptVip={}",
+            body.aspect_ratio, body.image_size,
             body.images.as_ref().map(|v| v.len()).unwrap_or(0),
-            is_gpt,
-            is_gpt_vip,
-            body_json,
-        ));
+            is_gpt, is_gpt_vip);
+        info!("[GRSAI Body] {}", body_json);
         let response = self
             .client
             .post(&endpoint)
@@ -296,6 +289,7 @@ impl GrsaiProvider {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
+            tracing::error!("[GRSAI Error] status={} body={}", status, error_text);
             return Err(AIError::Provider(format!(
                 "GRSAI generate request failed {}: {}",
                 status, error_text
