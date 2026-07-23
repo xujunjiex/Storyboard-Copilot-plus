@@ -82,6 +82,15 @@ fn encode_reference_for_grsai(source: &str) -> Option<String> {
     Some(STANDARD.encode(bytes))
 }
 
+fn truncate_json_for_log(json: &str) -> String {
+    // 完整记录前 3000 字符，图片 base64 太长时会在 prompt 后截断但保留结构
+    if json.len() <= 3000 {
+        json.to_string()
+    } else {
+        format!("{}...<truncated, total {} chars>", &json[..3000], json.len())
+    }
+}
+
 fn is_gpt_image_2_model(model: &str) -> bool {
     let bare = model.split_once('/').map(|(_, m)| m).unwrap_or(model);
     bare == "gpt-image-2" || bare == "gpt-image-2-vip"
@@ -269,7 +278,12 @@ impl GrsaiProvider {
             .clone()
             .ok_or_else(|| AIError::InvalidRequest("API key not set".to_string()))?;
 
+        let body_json = serde_json::to_string_pretty(&body).unwrap_or_default();
         info!("[GRSAI API] URL: {} model: {}", endpoint, model);
+        info!("[GRSAI Request Body] aspect_ratio: {}, image_size: {:?}, images_count: {}, full_body: {}",
+            body.aspect_ratio, body.image_size,
+            body.images.as_ref().map(|v| v.len()).unwrap_or(0),
+            truncate_json_for_log(&body_json));
         let response = self
             .client
             .post(&endpoint)
