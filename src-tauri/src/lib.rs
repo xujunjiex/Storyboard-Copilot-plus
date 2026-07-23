@@ -19,25 +19,14 @@ const MAIN_WINDOW_LABEL: &str = "main";
 const FRONTEND_READY_TIMEOUT_MS: u64 = 3_500;
 
 pub(crate) fn resolve_log_dir() -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-
-    #[cfg(target_os = "macos")]
-    if let Ok(home) = std::env::var("HOME") {
-        candidates.push(PathBuf::from(home).join("Library/Logs/storyboard-copilot"));
-    }
-
-    candidates.push(std::env::temp_dir().join("storyboard-copilot/logs"));
-
-    if let Ok(current_dir) = std::env::current_dir() {
-        candidates.push(current_dir.join("logs"));
-    }
-
-    for directory in candidates {
-        if std::fs::create_dir_all(&directory).is_ok() {
-            return Some(directory);
+    // Always write logs to current directory (project root when run via tauri dev, or exe dir when packaged)
+    if let Ok(cwd) = std::env::current_dir() {
+        let log_dir = cwd.join("logs");
+        if std::fs::create_dir_all(&log_dir).is_ok() {
+            return Some(log_dir);
         }
     }
-
+    eprintln!("WARNING: could not create logs directory");
     None
 }
 
