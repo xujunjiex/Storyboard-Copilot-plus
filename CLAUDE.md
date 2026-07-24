@@ -344,6 +344,7 @@ npm run release -- patch --notes-file docs/releases/v0.2.1.md
 
 ## 10. 已知坑点
 
+- **Tauri 重编译前必须关闭旧进程**：`cargo build` 时会尝试覆写 `target/debug/storyboard-copilot.exe`，如果旧进程未关闭会导致 `拒绝访问 (os error 5)`。重编前执行 `taskkill //F //IM storyboard-copilot.exe` 确保旧进程已终止。
 - **图片 URL 格式**：`asset://`、`file://`、`blob:` 等本地协议需要通过 VOD 上传才能给视频生成 API 使用。`isLikelyLocalImagePath` 决定是否走上传流程。
 - **`asset://` 排除问题**：`imageData.ts` 中 `isLikelyLocalImagePath` 不能排除 `asset://`，否则图片跳过 VOD 上传导致后端 `source_to_url` 失败。
 - **Provider 匹配失败**：`VolcVideoProvider::supports_model` 必须覆盖所有火山视频模型名称，否则请求会路由到其他 provider 而报 "API key not set"。
@@ -358,6 +359,12 @@ npm run release -- patch --notes-file docs/releases/v0.2.1.md
 - **draft_task 模式 audio 参数**：从草稿生成正式视频时，不应发送 `generate_audio` 参数，草稿视频已包含音频设置。`volcvideo.rs` 中通过检查 `draft_task_id.is_none()` 来区分。
 - **视频 polling 失败处理**：`Canvas.tsx` 中 polling 连续失败 5 次后会在节点上显示"网络请求失败"错误，不再无限静默重试。
 - **本地视频播放**：`VideoResultNode` 使用 `resolveVideoDisplayUrl(data.videoUrl)` 转换本地路径，使 Tauri webview 能播放项目目录下的视频文件。参考：`src/features/canvas/application/imageData.ts`。
+- **uploads 目录不可删除**：`{projectDir}/uploads/` 是画布图的数据源之一（节点 `imagePool` 可能直接引用 `uploads/` 下的绝对路径），删除后画布图片显示破图。删除前需先确认项目数据已全部迁移到 imagePool。
+- **gpt-image-2 字段差异**：`gpt-image-2` 端点**没有** `imageSize` 字段（用 `#[serde(skip_serializing_if)]` 省略），只支持 `aspectRatio`（比例字符串或 1K 像素值）。`gpt-image-2-vip` 则把 ratio+resolution 查表映射为像素值。`nano-banana` 有 `imageSize`。
+- **Grsai 端点统一化**：nano-banana 和 gpt-image-2 都用 `POST /v1/api/generate`（不再是旧的 `/v1/draw/nano-banana`），响应扁平 JSON 无 `code`/`data` 包装；查询走 `GET /v1/api/result?id=xxx`。
+- **参考图尺寸压缩**：`encode_reference_for_grsai` 必须把参考图长边压缩到 ≤ 1K（1024px）再 base64，否则 Grsai 端点返回 400 "Parameter data type error"。JPEG 保持 JPEG q=85，PNG/WebP/GIF 统一转 JPEG。uploads 物理文件本身不被压缩（compress 只发生在 `encode_reference_for_grsai` 里）。
+- **生成节点 generationJobId 必须有值**：`Canvas.tsx` 轮询过滤条件 `data.generationJobId.length > 0` —— app 关闭过早时节点上 `generationJobId=""` 永远不轮询。Canvas 启动时调 `listResumableGenerationJobs`（查后端 SQLite `ai_generation_jobs` 表）回填空 `generationJobId` 的 exportImageNode。
+- **前端日志监控缺失**：Rust `tracing::error!` 写到 `storyboard.log` 文件但**不回传**前端 `LogPanel`。修复：后端用 `app.emit("backend:ai-error", ...)` 推 Tauri event，前端 `src/lib/logger/index.ts` `ensureBackendErrorListener()` 订阅并 append 到 LogStore。
 
 ## 11. 提交前检查清单
 
@@ -409,6 +416,54 @@ npm run release -- patch --notes-file docs/releases/v0.2.1.md
 - `appearance` - 外观
 - `experimental` - 实验
 - `about` - 关于
+
+---
+
+## 14. 日志系统概览
+
+**位置**：项目根 `logs/storyboard.log.YYYY-MM-DD`（通过 `CARGO_MANIFEST_DIR.parent()` 定位项目根，不用 `$TEMP`）。日切保留 14 天（`commands/cleanup::cleanup_old_logs`）。
+
+**写入链路**：Rust 业务 `tracing::info!/warn!/error!` + 前端 `logger.error/info/warn`（走 `append_frontend_log` Tauri 命令）→ `tracing_subscriber` → `tracing_appender::rolling::daily` → 磁盘文件。Frontend `logger.error` 走 `useLogStore.appendEntry()` 写到内存 RingBuffer（容量 500）→ `LogPanel` 实时显示。
+
+**前后端桥接（重要）**：Rust `tracing::error!` **不**会自动显示在 LogPanel。必须显式 `app.emit("backend:ai-error", ...)`，前端 `src/lib/logger/index.ts` 的 `ensureBackendErrorListener()` 订阅后 append 到 LogStore。修改 Provider 错误处理时同时加 tracing + emit。**调试 AI 报错的标准流程**：触发请求 → `tail -f logs/storyboard.log.$(date +%Y-%m-%d)` → 搜 `GRSAI Error` / `AI Backend Error`。**不要只盯着 `grsai_debug.log` 那种独立文件**——它跟日志管理器不是同一个体系。
+
+**关键文件**：
+- `src-tauri/src/lib.rs:21-42` `resolve_log_dir()` 决定日志目录（必须走项目根）
+- `src-tauri/src/commands/cleanup.rs` 14 天清理策略（`KEEP_DAYS = 14`）
+- `src-tauri/src/commands/logging.rs` `append_frontend_log` Tauri 命令 + `open_log_dir` 命令（设置里"打开日志目录"按钮调用）
+- `src/lib/logger/store.ts` 前端 LogStore（Zustand RingBuffer）
+- `src/lib/logger/transport.ts` 前端 Transport（200ms 批量 flush 到 Rust）
+- `src/lib/logger/index.ts` `backend:ai-error` 事件桥接监听器（模块加载时自动启动）
+
+## 15. Grsai / gpt-image-2 适配规范
+
+**统一端点**：所有 Grsai 模型都用 `POST /v1/api/generate` + `GET /v1/api/result?id=xxx`，**不再用** `/v1/draw/nano-banana` + POST `/v1/draw/result`。响应扁平 JSON，无 `code/data` 包装。base URL 复用 `https://grsai.dakka.com.cn`（DEFAULT_BASE_URL）。
+
+**模型路由**（`src-tauri/src/ai/providers/grsai/mod.rs`）：`is_gpt_image_2_model` 判断走 gpt-image-2 分支，`is_gpt_vip` 判断走像素值查表。`normalize_requested_model` 保留 nano-banana-pro 子变体选择。`list_models()` 列出 `grsai/nano-banana-2`、`grsai/nano-banana-pro`、`grsai/gpt-image-2`、`grsai/gpt-image-2-vip`。`supports_model` 对 `grsai/*` 前缀全开。
+
+**字段差异**（核心）：
+
+| 模型 | model | prompt | images | aspectRatio | imageSize | replyType | aspectRatio 含义 | imageSize 含义 |
+|------|-------|--------|--------|-------------|-----------|-----------|------------------|----------------|
+| nano-banana-* | ✓ | ✓ | ✓ (base64/url) | ✓ (auto/比率) | ✓ (1K/2K/4K) | ✓ | 比例字符串 | 单独分辨率字段 |
+| gpt-image-2 | ✓ | ✓ | ✓ (base64/url) | ✓ (比例或 1K 像素) | ❌ 省略 | ✓ | 直接传比率字符串 | N/A |
+| gpt-image-2-vip | ✓ | ✓ | ✓ (base64/url) | ✓ (查表像素值) | ❌ 省略 | ✓ | 查表得 `"2048x1152"` | N/A |
+
+**gpt-image-2-vip aspectRatio 查表**：Rust `resolve_gpt_image_2_vip_dimensions(aspect_ratio, size)` 15 个比例 × 最多 3 个分辨率，1:3/3:1 无 4K（API 不支持）。`resolutions: ["1K", "2K", "4K"]` 通过 `resolveResolutions({aspectRatio})` 动态过滤，1:3/3:1 选 [1K, 2K]，其他选 [1K, 2K, 4K]。前端模型文件 `src/features/canvas/models/image/grsai/gptImage2Vip.ts`。
+
+**图片压缩（强制）**：`encode_reference_for_grsai` 内 `compress_to_max_edge(bytes, 1024)`，Lanczos3 缩放、JPEG q=85 重新编码。1MB+ 的大图必须缩到 1K（1024px 长边）以下才能过 API 校验。失败时降级用原图（记录 warning）。uploads 物理文件本身不会被压缩，只在发送给 API 的那一刻压缩。**新增参考图支持时不要漏掉这个压缩步骤**。
+
+**轮询**：`poll_once` 用 `GET ?id=xxx`，响应解析为扁平 JSON。`status: "running"` → 继续；`"violation"` / `"failed"` → 失败；其他（如 `"expired"` 未知状态）→ 返回 `Err(Provider)`。HTTP 4xx 也返回 `Err`。`get_generate_image_job` 收到 `Err` 时把 DB 状态更新为 `failed` 并把 error 推给前端。**任务过期场景**目前会变成 generic error 提示。
+
+**前端模型定义**：gpt-image-2 标准版 600 积分，gpt-image-2-vip 1300 积分（`createGrsaiPointsPricing`）。每模型一个文件，glob `import.meta.glob<{ imageModel }>` 限制单文件单导出。文件名约定 `gptImage2.ts` + `gptImage2Vip.ts`。`resolveRequest` 返回 `requestModel` = 完整 ID（含 `grsai/` 前缀）。
+
+**新增 Grsai 模型**的标准流程：1) 改 `SUPPORTED_MODELS` 列表 + `list_models` 2) `normalize_requested_model` 加分支 3) 如需查表像素值加 `resolve_xxx_dimensions` 4) 前端 `models/image/grsai/` 新增文件 5) `registry.ts` 自动发现无需改。改完跑 `npx tsc --noEmit && cd src-tauri && cargo check`。**发布前手动测一条路径 + 一条异常路径**（如：默认参数、故意删 API key 报错）。**重新发布版本**走 `npm run release -- patch --notes-file docs/releases/vX.Y.Z.md`。日志写到 `docs/superpowers/specs/` 和 `docs/superpowers/plans/`。
+
+## 16. 异步任务恢复机制（重启后继续轮询）
+
+**问题**：app 关闭过早时 `exportImageNode` 上 `generationJobId` 字段还没写入（`submitGenerateImageJob` 异步返回前就退出），节点卡在 `isGenerating=true` 但 `generationJobId=""`。`Canvas.tsx` 第 447 行的轮询过滤 `data.generationJobId.length > 0` 永远不通过。**用户感觉"一直等待输出"**。
+
+**恢复流程**：Canvas 挂载 effect → 调 `canvasAiGateway.listResumableGenerationJobs()`（新 Tauri 命令 `list_resumable_generation_jobs`）→ 后端查 SQLite `ai_generation_jobs` 表里 `status IN ('running', 'queued') AND resumable=1` 的所有 job → 返回 `{job_id, provider_id, external_task_id, status, created_at}` → 前端扫 `isGenerating=true` 且 `generationJobId` 为空的 exportImageNode → 写入 `generationJobId` + `generationProviderId` → 触发原轮询 effect（依赖 `nodes` 变化）→ `get_generate_image_job` 调 `provider.poll_task` → 查 Grsai `GET /v1/api/result?id=xxx` → 填充 `imageUrl` 写回 SQLite → 节点 `isGenerating=false, imageUrl=xxx` → 显示结果。**`grsai/nano-banana-2` 这种 resumable=true 的模型都能恢复**；`ppio/bltcy` 等 `resumable=false` 的不行（app 退出后 `get_generate_image_job` 会标为 `failed "job interrupted by app restart"`）。**新模型要支持恢复**必须 `supports_task_resume()` 返回 `true`。**给节点加新 job 字段时**也必须在 addNode 时一并传完整 data，不能依赖后续 updateNodeData（如果中断会丢）。新生成节点建议 addNode 时直接传一个临时 jobId 占位。
 
 ---
 
