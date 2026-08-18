@@ -19,14 +19,20 @@ const MAIN_WINDOW_LABEL: &str = "main";
 const FRONTEND_READY_TIMEOUT_MS: u64 = 3_500;
 
 pub(crate) fn resolve_log_dir() -> Option<PathBuf> {
-    // Always write logs to current directory (project root when run via tauri dev, or exe dir when packaged)
-    if let Ok(cwd) = std::env::current_dir() {
-        let log_dir = cwd.join("logs");
-        if std::fs::create_dir_all(&log_dir).is_ok() {
-            return Some(log_dir);
-        }
+    // CARGO_MANIFEST_DIR points to src-tauri/, go up to project root
+    let project_root = if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+        PathBuf::from(&manifest)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from(&manifest))
+    } else {
+        std::env::current_dir().unwrap_or_default()
+    };
+    let log_dir = project_root.join("logs");
+    if std::fs::create_dir_all(&log_dir).is_ok() {
+        return Some(log_dir);
     }
-    eprintln!("WARNING: could not create logs directory");
+    eprintln!("WARNING: could not create logs directory at {:?}", log_dir);
     None
 }
 

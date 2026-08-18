@@ -1,6 +1,7 @@
 use reqwest::Client;
 use serde::Serialize;
 use serde_json::{Value};
+use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -52,16 +53,28 @@ fn decode_file_url_path(value: &str) -> String {
 fn encode_reference_for_grsai(source: &str) -> Option<String> {
     let trimmed = source.trim();
     if trimmed.is_empty() {
+        tracing::warn!("[GRSAI Encode] empty source string");
         return None;
     }
 
+    let source_preview = if trimmed.len() > 100 {
+        format!("{}...(len={})", &trimmed[..100], trimmed.len())
+    } else {
+        trimmed.to_string()
+    };
+
     if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        info!("[GRSAI Encode] HTTP URL: {}", trimmed);
         return Some(trimmed.to_string());
     }
 
     if let Some((meta, payload)) = trimmed.split_once(',') {
         if meta.starts_with("data:") && meta.ends_with(";base64") && !payload.is_empty() {
+            info!("[GRSAI Encode] data: URL -> pure base64 (mime={}, base64_len={})", meta, payload.len());
             return Some(payload.to_string());
+        }
+        if meta.starts_with("data:") {
+            tracing::warn!("[GRSAI Encode] data: URL but not base64 mime: meta={} payload_len={}", meta, payload.len());
         }
     }
 
@@ -70,22 +83,104 @@ fn encode_reference_for_grsai(source: &str) -> Option<String> {
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '+' || ch == '/' || ch == '=');
     if likely_base64 {
+        info!("[GRSAI Encode] pure base64 (len={})", trimmed.len());
         return Some(trimmed.to_string());
     }
 
+    // 视为本地文件路径，读取 → 压缩到 1K → base64 编码
     let path = if trimmed.starts_with("file://") {
         PathBuf::from(decode_file_url_path(trimmed))
     } else {
         PathBuf::from(trimmed)
     };
-    let bytes = std::fs::read(path).ok()?;
-    Some(STANDARD.encode(bytes))
+
+    info!("[GRSAI Encode] reading local file: {} (raw_source_preview={})", path.display(), source_preview);
+
+    let raw_bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::error!("[GRSAI Encode] failed to read file {}: {}", path.display(), e);
+            return None;
+        }
+    };
+
+    // 尝试从文件头部推断 MIME（用于诊断）
+    let original_mime = if raw_bytes.len() >= 4 {
+        match &raw_bytes[..4] {
+            [0xFF, 0xD8, 0xFF, _] => "image/jpeg",
+            [0x89, b'P', b'N', b'G'] => "image/png",
+            [b'G', b'I', b'F', _] => "image/gif",
+            [b'W', b'E', b'B', b'P'] => "image/webp",
+            _ => "unknown",
+        }
+    } else {
+        "too_small"
+    };
+
+    // 压缩到 1K（长边 ≤ 1024px），降低带宽/服务端拒绝概率
+    const MAX_EDGE: u32 = 1024;
+    let (bytes, final_mime) = match compress_to_max_edge(&raw_bytes, MAX_EDGE) {
+        Ok((b, m)) => {
+            info!("[GRSAI Encode] compressed: {} -> {} bytes (max_edge={}, orig_mime={}, final_mime={})",
+                raw_bytes.len(), b.len(), MAX_EDGE, original_mime, m);
+            (b, m)
+        }
+        Err(e) => {
+            tracing::warn!("[GRSAI Encode] compress failed ({}), sending original {} bytes", e, raw_bytes.len());
+            (raw_bytes, original_mime.to_string())
+        }
+    };
+
+    let encoded = STANDARD.encode(&bytes);
+    info!("[GRSAI Encode] file encoded: path={} file_size={} base64_len={} mime={}",
+        path.display(), bytes.len(), encoded.len(), final_mime);
+    Some(encoded)
 }
 
 
 fn is_gpt_image_2_model(model: &str) -> bool {
     let bare = model.split_once('/').map(|(_, m)| m).unwrap_or(model);
     bare == "gpt-image-2" || bare == "gpt-image-2-vip"
+}
+
+/// Compress image so its long edge <= MAX_EDGE pixels.
+/// Preserves JPEG quality (re-encodes JPEG), downscales and re-encodes PNG/WebP/GIF as JPEG q=85.
+fn compress_to_max_edge(bytes: &[u8], max_edge: u32) -> Result<(Vec<u8>, String), String> {
+    let img = image::load_from_memory(bytes)
+        .map_err(|e| format!("decode failed: {}", e))?;
+    let (w, h) = (img.width(), img.height());
+    let long_edge = w.max(h);
+    let new_img = if long_edge > max_edge {
+        let scale = max_edge as f32 / long_edge as f32;
+        let new_w = ((w as f32 * scale).round() as u32).max(1);
+        let new_h = ((h as f32 * scale).round() as u32).max(1);
+        img.resize(new_w, new_h, image::imageops::FilterType::Lanczos3)
+    } else {
+        img
+    };
+    let mut out = Cursor::new(Vec::new());
+    let mime = if bytes.len() >= 4 && &bytes[..3] == b"\xFF\xD8\xFF" {
+        // JPEG input → keep JPEG output (re-encode to strip metadata & apply compression)
+        let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 85);
+        new_img.write_with_encoder(encoder)
+            .map_err(|e| format!("jpeg encode failed: {}", e))?;
+        "image/jpeg".to_string()
+    } else if bytes.len() >= 4 && &bytes[..4] == b"\x89PNG" {
+        // PNG (likely with transparency) → PNG with palette reduction
+        let encoder = image::codecs::png::PngEncoder::new(&mut out);
+        new_img.write_with_encoder(encoder)
+            .map_err(|e| format!("png encode failed: {}", e))?;
+        "image/png".to_string()
+    } else {
+        // WebP/GIF/anything else → JPEG
+        let rgb = new_img.to_rgb8();
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 85);
+        use image::ImageEncoder;
+        encoder.write_image(rgb.as_raw(), rgb.width(), rgb.height(), image::ExtendedColorType::Rgb8)
+            .map_err(|e| format!("jpeg encode failed: {}", e))?;
+        "image/jpeg".to_string()
+    };
+    Ok((out.into_inner(), mime))
 }
 
 fn resolve_gpt_image_2_vip_dimensions(aspect_ratio: &str, size: &str) -> Result<String, AIError> {
@@ -239,10 +334,17 @@ impl GrsaiProvider {
                 .reference_images
                 .as_ref()
                 .map(|images| {
-                    images
+                    info!("[GRSAI Images] processing {} reference image(s)", images.len());
+                    for (idx, img) in images.iter().enumerate() {
+                        let preview: String = img.chars().take(80).collect();
+                        info!("[GRSAI Images] input[{}] preview={} (full_len={})", idx, preview, img.len());
+                    }
+                    let collected: Vec<String> = images
                         .iter()
                         .filter_map(|image| encode_reference_for_grsai(image))
-                        .collect::<Vec<_>>()
+                        .collect();
+                    info!("[GRSAI Images] encoded {} out of {} images successfully", collected.len(), images.len());
+                    collected
                 })
                 .filter(|v| !v.is_empty()),
             aspect_ratio,
@@ -276,7 +378,25 @@ impl GrsaiProvider {
             body.aspect_ratio, body.image_size,
             body.images.as_ref().map(|v| v.len()).unwrap_or(0),
             is_gpt, is_gpt_vip);
-        info!("[GRSAI Body] {}", body_json);
+        // Strip base64 image payloads for log readability; show metadata only
+        let body_for_log = serde_json::json!({
+            "model": body.model,
+            "prompt": body.prompt,
+            "images_count": body.images.as_ref().map(|v| v.len()).unwrap_or(0),
+            "image_sizes": body.images.as_ref().map(|v| v.iter().map(|s| s.len()).collect::<Vec<_>>()),
+            "image_mime_hints": body.images.as_ref().map(|v| v.iter().map(|s| {
+                if s.len() >= 10 {
+                    format!("base64[{}..{}]", &s[..5], &s[s.len()-5..])
+                } else {
+                    s.clone()
+                }
+            }).collect::<Vec<_>>()),
+            "aspectRatio": body.aspect_ratio,
+            "imageSize": body.image_size,
+            "replyType": body.reply_type,
+        });
+        info!("[GRSAI Body] {}", serde_json::to_string_pretty(&body_for_log).unwrap_or_default());
+        info!("[GRSAI Body Raw Length] {}", body_json.len());
         let response = self
             .client
             .post(&endpoint)
