@@ -210,6 +210,21 @@ export async function getGenerateImageJob(jobId: string): Promise<GenerationJobS
   return result;
 }
 
+export interface ResumableJob {
+  job_id: string;
+  provider_id: string;
+  external_task_id: string | null;
+  status: string;
+  created_at: number;
+}
+
+export async function listResumableGenerationJobs(): Promise<ResumableJob[]> {
+  if (!isTauri()) {
+    return [];
+  }
+  return await invoke<ResumableJob[]>('list_resumable_generation_jobs');
+}
+
 export async function cancelVideoGenerationTask(apiKey: string, taskId: string): Promise<void> {
   if (!isTauri()) {
     throw new Error('当前不是 Tauri 容器环境，请使用 `npm run tauri dev` 启动');

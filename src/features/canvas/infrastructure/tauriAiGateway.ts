@@ -1,8 +1,10 @@
 import {
   generateImage,
   getGenerateImageJob,
+  listResumableGenerationJobs,
   setApiKey,
   submitGenerateImageJob,
+  type ResumableJob,
 } from '@/commands/ai';
 import { persistImageLocally, isLikelyLocalImagePath } from '@/features/canvas/application/imageData';
 import { uploadImageToVolcVod } from '@/commands/image';
@@ -41,7 +43,9 @@ async function normalizeReferenceImages(payload: GenerateImagePayload): Promise<
           ? isLikelyLocalImagePath(imageUrl)
             ? (logger.info('[normalizeReferenceImages] image[' + index + '] uploading to VOD...'), await uploadImageToVolcVodBackend(imageUrl)) // 视频模型需要公网直链，上传到火山 VOD
             : (logger.info('[normalizeReferenceImages] image[' + index + '] using as-is (not local path)'), imageUrl) // 已经是公网直链，直接使用
-          : await persistImageLocally(imageUrl, payload.projectId)
+          : isLikelyLocalImagePath(imageUrl)
+            ? (logger.info('[normalizeReferenceImages] image[' + index + '] already local, skip persist'), imageUrl) // 已经在 uploads/ 下，跳过重复持久化
+            : await persistImageLocally(imageUrl, payload.projectId)
       )
     )
     : undefined;
@@ -81,4 +85,7 @@ export const tauriAiGateway: AiGateway = {
     });
   },
   getGenerateImageJob,
+  listResumableGenerationJobs: async (): Promise<ResumableJob[]> => {
+    return await listResumableGenerationJobs();
+  },
 };

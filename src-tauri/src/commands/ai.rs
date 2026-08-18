@@ -690,6 +690,58 @@ pub async fn get_generate_image_job(
     }
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct ResumeJobItem {
+    pub job_id: String,
+    pub provider_id: String,
+    pub external_task_id: Option<String>,
+    pub status: String,
+    pub created_at: i64,
+}
+
+fn list_resumable_jobs(app: &AppHandle) -> Result<Vec<ResumeJobItem>, String> {
+    let conn = open_db(app)?;
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT job_id, provider_id, external_task_id, status, created_at
+            FROM ai_generation_jobs
+            WHERE status IN ('running', 'queued')
+              AND resumable = 1
+              AND external_task_id IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT 100
+            "#,
+        )
+        .map_err(|e| format!("Failed to prepare resumable jobs query: {}", e))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(ResumeJobItem {
+                job_id: row.get(0)?,
+                provider_id: row.get(1)?,
+                external_task_id: row.get(2)?,
+                status: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        })
+        .map_err(|e| format!("Failed to query resumable jobs: {}", e))?;
+
+    let mut jobs = Vec::new();
+    for job in rows.flatten() {
+        jobs.push(job);
+    }
+    Ok(jobs)
+}
+
+#[tauri::command]
+pub async fn list_resumable_generation_jobs(
+    app: AppHandle,
+) -> Result<Vec<ResumeJobItem>, String> {
+    info!("[list_resumable_generation_jobs] called");
+    list_resumable_jobs(&app)
+}
+
 #[tauri::command]
 pub async fn generate_image(request: GenerateRequestDto) -> Result<String, String> {
     info!("Generating image with model: {}", request.model);

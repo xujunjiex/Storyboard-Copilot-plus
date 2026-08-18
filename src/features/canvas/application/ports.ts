@@ -56,6 +56,15 @@ export interface AiGateway {
     seed?: number | null;
     external_task_id?: string | null;
   }>;
+  listResumableGenerationJobs: () => Promise<ResumableJob[]>;
+}
+
+export interface ResumableJob {
+  job_id: string;
+  provider_id: string;
+  external_task_id: string | null;
+  status: string;
+  created_at: number;
 }
 
 export interface ImageSplitGateway {

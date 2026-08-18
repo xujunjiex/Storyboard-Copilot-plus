@@ -756,6 +756,43 @@ export function Canvas() {
     }
   }, [apiKeys, videoApis, nodes, updateNodeData]);
 
+  // 恢复机制：从后端 SQLite 拉取所有未完成的 resumable jobs
+  // 用于修复节点 data 中丢失 generationJobId 的情况（app 关闭过早）
+  useEffect(() => {
+    if (isRestoringCanvasRef.current) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const jobs = await canvasAiGateway.listResumableGenerationJobs();
+        if (cancelled || !Array.isArray(jobs) || jobs.length === 0) return;
+        const allNodes = useCanvasStore.getState().nodes;
+        for (const job of jobs) {
+          if (cancelled) break;
+          if (!job.external_task_id) continue;
+          // 找到 isGenerating=true 且没有 generationJobId 的 exportImageNode
+          const target = allNodes.find((n) => {
+            if (n.type !== CANVAS_NODE_TYPES.exportImage) return false;
+            const d = n.data as Record<string, unknown>;
+            return d.isGenerating === true &&
+              (typeof d.generationJobId !== 'string' || (d.generationJobId as string).length === 0);
+          });
+          if (target) {
+            logger.info('[GenerationJob] restoring missing generationJobId from DB', {
+              nodeId: target.id, jobId: job.job_id, provider: job.provider_id,
+            });
+            updateNodeData(target.id, {
+              generationJobId: job.job_id,
+              generationProviderId: job.provider_id,
+            });
+          }
+        }
+      } catch (err) {
+        logger.warn('[GenerationJob] listResumableGenerationJobs failed', { error: err });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [updateNodeData]);
+
   useEffect(() => {
     const element = wrapperRef.current;
     if (!element) {
