@@ -1,0 +1,239 @@
+openapi: 3.0.1
+info:
+  title: ''
+  description: ''
+  version: 1.0.0
+paths:
+  /v1/api/generate:
+    post:
+      summary: nano-banana接口
+      deprecated: false
+      description: |-
+        基础节点：
+        https://grsaiapi.com                (全球节点)
+        https://grsai.dakka.com.cn     (国内节点)
+
+        例子：
+        https://grsaiapi.com/v1/api/generate
+        https://grsai.dakka.com.cn/v1/api/generate
+      tags:
+        - Grsai图片/视频生成接口
+      parameters:
+        - name: base_url
+          in: path
+          description: ''
+          required: true
+          schema:
+            type: string
+        - name: Authorization
+          in: header
+          description: 请前往以下页面获取APIKEY：https://grsai.ai/zh/dashboard/api-keys
+          required: false
+          example: Bearer sk-xxxxxxxxxxx
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                model:
+                  type: string
+                  title: 模型名称
+                  description: |-
+                    支持以下模型
+                    nano-banana
+                    nano-banana-fast
+                    nano-banana-2
+                    nano-banana-2-cl
+                    nano-banana-2-2k-cl
+                    nano-banana-2-4k-cl
+                    nano-banana-pro
+                    nano-banana-pro-vt
+                    nano-banana-pro-cl
+                    nano-banana-pro-vip
+                    nano-banana-pro-4k-vip
+                prompt:
+                  type: string
+                  title: 提示词
+                images:
+                  type: array
+                  items:
+                    type: string
+                  title: 参考图
+                  description: 支持base64与url链接
+                aspectRatio:
+                  type: string
+                  title: 比例
+                  description: |-
+                    图像比例支持的参数:
+                    auto
+                    1:1
+                    16:9
+                    9:16
+                    4:3
+                    3:4
+                    3:2
+                    2:3
+                    5:4
+                    4:5
+                    21:9
+
+                    nano-banana-2系列额外支持比例
+                    1:4
+                    4:1
+                    1:8
+                    8:1
+                replyType:
+                  type: string
+                  title: 回复类型
+                  description: |-
+                    支持参数
+                    json（返回json）
+                    stream（返回stream）
+                    async（异步轮询）
+                    异步生成结果查询接口：https://qmy27nhsd9.apifox.cn/452409577e0
+                imageSize:
+                  type: string
+                  title: 分辨率
+                  description: 1K、2K、4K
+              required:
+                - model
+                - prompt
+              x-apifox-orders:
+                - model
+                - prompt
+                - images
+                - aspectRatio
+                - imageSize
+                - replyType
+            example:
+              model: nano-banana-2
+              prompt: 生成一张边牧与古牧正在抖音直播间直播带货截图
+              images: []
+              aspectRatio: '1:1'
+              imageSize: 1K
+              replyType: json
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    title: 任务id
+                  status:
+                    type: string
+                    title: 状态
+                    description: |
+                      任务状态
+                      running  (进行中)
+                      violation  (违规)
+                      succeeded (生成成功)
+                      failed (任务失败)
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        url:
+                          type: string
+                          title: 图片/视频链接
+                      x-apifox-orders:
+                        - url
+                  progress:
+                    type: integer
+                    title: 进度
+                    description: 0~100
+                  error:
+                    type: string
+                    title: 报错信息
+                required:
+                  - id
+                  - status
+                x-apifox-orders:
+                  - id
+                  - status
+                  - progress
+                  - results
+                  - error
+              example:
+                id: 14-5f3cf761-a4bb-486a-8016-77f490998f80
+                status: succeeded
+                results:
+                  - url: >-
+                      https://file1.aitohumanize.com/file/fcdd2d07449d438d9d69d450f5626976.png
+          headers: {}
+          x-apifox-name: 成功
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  status:
+                    type: string
+                    title: 状态
+                    description: |-
+                      状态
+                      violation（违规）
+                      failed（失败）
+                  error:
+                    type: string
+                    title: 报错信息
+                required:
+                  - id
+                  - status
+                  - error
+                x-apifox-orders:
+                  - id
+                  - status
+                  - error
+              example:
+                id: 12-1f771fbf-f23a-4b89-a7d0-a98ba9862edb
+                status: failed
+                error: generate failed
+          headers: {}
+          x-apifox-name: 报错
+        x-200:异步生成返回结果:
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    title: 任务id
+                    description: |-
+                      通过该id调用异步结果查询接口
+                      接口文档：https://qmy27nhsd9.apifox.cn/452409577e0
+                  status:
+                    type: string
+                required:
+                  - id
+                  - status
+                x-apifox-orders:
+                  - id
+                  - status
+              example:
+                id: 6-f671fc51-d5d7-4eff-a1c7-26e612fe08ab
+                status: running
+          headers: {}
+          x-apifox-name: 异步生成返回结果
+      security: []
+      x-apifox-folder: Grsai图片/视频生成接口
+      x-apifox-status: released
+      x-run-in-apifox: https://app.apifox.com/web/project/8212034/apis/api-452392911-run
+components:
+  schemas: {}
+  securitySchemes: {}
+  servers: []
+security: []

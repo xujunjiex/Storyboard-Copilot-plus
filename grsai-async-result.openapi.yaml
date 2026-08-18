@@ -1,0 +1,137 @@
+openapi: 3.0.1
+info:
+  title: ''
+  description: ''
+  version: 1.0.0
+paths:
+  /v1/api/result:
+    get:
+      summary: 异步生成结果查询接口
+      deprecated: false
+      description: |-
+        基础节点：
+        https://grsaiapi.com                (全球节点)
+        https://grsai.dakka.com.cn     (国内节点)
+
+        例子：
+        https://grsaiapi.com/v1/api/result
+        https://grsai.dakka.com.cn/v1/api/result
+      tags:
+        - Grsai图片/视频生成接口
+      parameters:
+        - name: base_url
+          in: path
+          description: ''
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: query
+          description: ''
+          required: false
+          example: 1-6634fd9a-3086-4d92-9436-69e86fd23bf8
+          schema:
+            type: string
+        - name: Authorization
+          in: header
+          description: 请前往以下页面获取APIKEY：https://grsai.ai/zh/dashboard/api-keys
+          required: false
+          example: Bearer sk-xxxxxxxxxxx
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    title: 任务id
+                  status:
+                    type: string
+                    title: 状态
+                    description: |
+                      任务状态
+                      running  (进行中)
+                      violation  (违规)
+                      succeeded (生成成功)
+                      failed (任务失败)
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        url:
+                          type: string
+                          title: 图片/视频链接
+                      x-apifox-orders:
+                        - url
+                  progress:
+                    type: integer
+                    title: 进度
+                    description: 0~100
+                  error:
+                    type: string
+                    title: 报错信息
+                required:
+                  - id
+                  - status
+                x-apifox-orders:
+                  - id
+                  - status
+                  - progress
+                  - results
+                  - error
+              example:
+                id: 14-5f3cf761-a4bb-486a-8016-77f490998f80
+                status: succeeded
+                results:
+                  - url: >-
+                      https://file1.aitohumanize.com/file/fcdd2d07449d438d9d69d450f5626976.png
+          headers: {}
+          x-apifox-name: 成功
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  status:
+                    type: string
+                    title: 状态
+                    description: |-
+                      状态
+                      violation（违规）
+                      failed（失败）
+                  error:
+                    type: string
+                    title: 报错信息
+                required:
+                  - id
+                  - status
+                  - error
+                x-apifox-orders:
+                  - id
+                  - status
+                  - error
+              example:
+                id: 12-1f771fbf-f23a-4b89-a7d0-a98ba9862edb
+                status: failed
+                error: generate failed
+          headers: {}
+          x-apifox-name: 报错
+      security: []
+      x-apifox-folder: Grsai图片/视频生成接口
+      x-apifox-status: released
+      x-run-in-apifox: https://app.apifox.com/web/project/8212034/apis/api-452409577-run
+components:
+  schemas: {}
+  securitySchemes: {}
+  servers: []
+security: []
